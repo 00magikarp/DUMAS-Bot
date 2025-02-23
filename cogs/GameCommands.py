@@ -8,8 +8,7 @@ from extras.Game import Game
 
 # noinspection PyUnresolvedReferences
 class GameCommands(commands.GroupCog, name="game", description="Game commands"):
-    # games: list[Game] = []
-    games: dict[discord.TextChannel: Game] = {}
+    games: dict[discord.TextChannel, Game] = {}
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -33,8 +32,16 @@ class GameCommands(commands.GroupCog, name="game", description="Game commands"):
             await interaction.response.send_message("Game already exists in this channel.")
             return
 
-        GameCommands.games[interaction.channel] = Game(interaction.user)
-        await interaction.response.send_message(f"Created new game by <@{interaction.user.id}>")
+        GameCommands.games[interaction.channel] = Game(interaction.user, interaction.channel)
+        await interaction.response.send_message(
+            f"Created new game by <@{interaction.user.id}> Will be auto-aborted in 5 minutes."
+        )
+        await interaction.defer()
+
+        asyncio.sleep(60 * 5)
+        if not GameCommands.games[interaction.channel].started:
+            await interaction.followup.send("Game auto-aborted after 5 minutes.")
+            del GameCommands.games[interaction.channel]
 
     @discord.app_commands.command(
         name="join",
@@ -46,6 +53,8 @@ class GameCommands(commands.GroupCog, name="game", description="Game commands"):
 
         :param interaction: The interaction object.
         """
+        if interaction.channel not in GameCommands.games.keys():
+            await interaction.response.send_message("Game doesn't exist in channel yet! Run `/game create` to make one.")
         if interaction.user in GameCommands.games[interaction.channel].players:
             await interaction.response.send_message("You're already in this game!")
             return
@@ -165,7 +174,7 @@ class GameCommands(commands.GroupCog, name="game", description="Game commands"):
 
         GameCommands.games[interaction.channel].start()
 
-        await interaction.response.send_message(f"Current card: {GameCommands.games[interaction.channel].card}")
+        await interaction.response.send_message(f"{GameCommands.games[interaction.channel].get_current_card()}")
         await interaction.followup.send(f"<@{GameCommands.games[interaction.channel].get_current_player().id}>'s turn!")
 
     @discord.app_commands.command(
@@ -192,11 +201,9 @@ class GameCommands(commands.GroupCog, name="game", description="Game commands"):
             await interaction.response.send_message("It's not your turn!", ephemeral=True)
             return
 
-        if move == "draw":
+        if move.lower() == "draw":
             GameCommands.games[interaction.channel].draw()
-            await interaction.response.send_message(
-                f"<@{interaction.user.id}> has made their move! New card on top: {GameCommands.games[interaction.channel].card}"
-            )
+            await interaction.response.send_message(f"{GameCommands.games[interaction.channel].get_current_card()}")
             await interaction.followup.send(f"<@{GameCommands.games[interaction.channel].get_current_player().id}>'s turn!")
             return
 
@@ -204,7 +211,7 @@ class GameCommands(commands.GroupCog, name="game", description="Game commands"):
 
         if len(cards_with_operations) % 2 != 1:
             await interaction.response.send_message(
-                f"<@{interaction.user.id}> Invalid move! (err: incorrect ratio of terms:operators)"
+                f"<@{interaction.user.id}> Invalid move! (err: incorrect ratio of terms to operators)"
             )
             return
 
@@ -243,20 +250,18 @@ class GameCommands(commands.GroupCog, name="game", description="Game commands"):
                 return
             current_hand.remove(char.upper())
 
-        if GameCommands.games[interaction.channel].play(move):
-            await interaction.response.send_message(
-                f"<@{interaction.user.id}> has made their move! New card on top: {GameCommands.games[interaction.channel].card}"
-            )
-            await interaction.followup.send(
-                f"<@{GameCommands.games[interaction.channel].get_current_player().id}>'s turn!"
-            )
-        else:
-            await interaction.response.send_message(f"<@{interaction.user.id}> Invalid move! (err: rejected)")
-
         if GameCommands.games[interaction.channel].isCompleted:
             await interaction.followup.send(
-                f"Game has completed! Winner is **<@{GameCommands.games[interaction.channel].winner}>!"
+                f"Game has completed! Winner is **<@{GameCommands.games[interaction.channel].winner.id}>!"
             )
+            del GameCommands.games[interaction.channel]
+            return
+
+        if GameCommands.games[interaction.channel].play(move):
+            await interaction.response.send_message(f"{GameCommands.games[interaction.channel].get_current_card()}")
+            await interaction.followup.send(f"<@{GameCommands.games[interaction.channel].get_current_player().id}>'s turn!")
+        else:
+            await interaction.response.send_message(f"<@{interaction.user.id}> Invalid move! (err: rejected)")
 
 
 async def setup(bot):
